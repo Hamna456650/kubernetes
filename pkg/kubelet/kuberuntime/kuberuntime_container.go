@@ -1082,6 +1082,7 @@ func (m *kubeGenericRuntimeManager) computeInitContainerActions(pod *v1.Pod, pod
 			continue
 		}
 
+		var message string
 		switch status.State {
 		case kubecontainer.ContainerStateCreated:
 			// nothing to do but wait for it to start
@@ -1102,10 +1103,11 @@ func (m *kubeGenericRuntimeManager) computeInitContainerActions(pod *v1.Pod, pod
 						if startup == proberesults.Failure {
 							// If the restartable init container failed the startup probe,
 							// restart it.
+							message = fmt.Sprintf("Init container %s failed startup probe, will be restarted", container.Name)
 							changes.ContainersToKill[status.ID] = containerToKillInfo{
 								name:      container.Name,
 								container: container,
-								message:   fmt.Sprintf("Init container %s failed startup probe", container.Name),
+								message:   message,
 								reason:    reasonStartupProbe,
 							}
 							changes.InitContainersToStart = append(changes.InitContainersToStart, i)
@@ -1133,14 +1135,31 @@ func (m *kubeGenericRuntimeManager) computeInitContainerActions(pod *v1.Pod, pod
 					if liveness == proberesults.Failure {
 						// If the restartable init container failed the liveness probe,
 						// restart it.
+						message = fmt.Sprintf("Init container %s failed liveness probe, will be restarted", container.Name)
 						changes.ContainersToKill[status.ID] = containerToKillInfo{
 							name:      container.Name,
 							container: container,
-							message:   fmt.Sprintf("Init container %s failed liveness probe", container.Name),
+							message:   message,
 							reason:    reasonLivenessProbe,
 						}
 						changes.InitContainersToStart = append(changes.InitContainersToStart, i)
+						break
 					}
+				}
+
+				// Restart running sidecar containers which have had their definition changed.
+				if _, _, changed := containerChanged(container, status); changed {
+					message = fmt.Sprintf("Init container %s definition changed, will be restarted", container.Name)
+
+					changes.ContainersToKill[status.ID] = containerToKillInfo{
+						name:      container.Name,
+						container: container,
+						message:   message,
+						reason:    "",
+					}
+
+					changes.InitContainersToStart = append(changes.InitContainersToStart, i)
+					break
 				}
 			} else { // init container
 				// nothing do to but wait for it to finish
@@ -1175,12 +1194,12 @@ func (m *kubeGenericRuntimeManager) computeInitContainerActions(pod *v1.Pod, pod
 		default: // kubecontainer.ContainerStatusUnknown or other unknown states
 			if types.IsRestartableInitContainer(container) {
 				// If the restartable init container is in unknown state, restart it.
+				message = fmt.Sprintf("Init container is in %q state, try killing it before restart", status.State)
 				changes.ContainersToKill[status.ID] = containerToKillInfo{
 					name:      container.Name,
 					container: container,
-					message: fmt.Sprintf("Init container is in %q state, try killing it before restart",
-						status.State),
-					reason: reasonUnknown,
+					message:   message,
+					reason:    reasonUnknown,
 				}
 				changes.InitContainersToStart = append(changes.InitContainersToStart, i)
 			} else { // init container
@@ -1195,16 +1214,17 @@ func (m *kubeGenericRuntimeManager) computeInitContainerActions(pod *v1.Pod, pod
 				}
 
 				// If the init container is in unknown state, restart it.
+				message = fmt.Sprintf("Init container is in %q state, try killing it before restart", status.State)
 				changes.ContainersToKill[status.ID] = containerToKillInfo{
 					name:      container.Name,
 					container: container,
-					message: fmt.Sprintf("Init container is in %q state, try killing it before restart",
-						status.State),
-					reason: reasonUnknown,
+					message:   message,
+					reason:    reasonUnknown,
 				}
 				changes.InitContainersToStart = append(changes.InitContainersToStart, i)
 			}
 		}
+		klog.V(4).InfoS("Message for Init Container of pod", "containerName", container.Name, "containerStatusID", status.ID, "pod", klog.KObj(pod), "containerMessage", message)
 
 		if !isPreviouslyInitialized {
 			// the one before this init container has been initialized
