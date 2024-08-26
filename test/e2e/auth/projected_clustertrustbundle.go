@@ -34,6 +34,7 @@ import (
 	certificatesv1alpha1 "k8s.io/api/certificates/v1alpha1"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/kubernetes/test/e2e/feature"
@@ -46,6 +47,14 @@ import (
 	"github.com/onsi/ginkgo/v2"
 )
 
+const (
+	testSignerOneName = "test.test/signer-one"
+	testSignerTwoName = "test.test/signer-two"
+	aliveSignersKey   = "signer.alive=true"
+	deadSignersKey    = "signer.alive=false"
+	noSignerKey       = "no-signer"
+)
+
 var _ = SIGDescribe(feature.ClusterTrustBundle, feature.ClusterTrustBundleProjection, func() {
 	f := framework.NewDefaultFramework("projected-clustertrustbundle")
 	f.NamespacePodSecurityLevel = admissionapi.LevelBaseline
@@ -54,16 +63,11 @@ var _ = SIGDescribe(feature.ClusterTrustBundle, feature.ClusterTrustBundleProjec
 	for i := range 10 {
 		certPEMs = append(certPEMs, mustMakeCAPEM(fmt.Sprintf("root%d", i)))
 	}
+	pemMapping := map[string]sets.Set[string]{}
 
-	// We must copy the original fields. Slicing is just applied pointer arithmetics
-	// and if we attempted an append to such a slice later, we'd be overriding the original
-	// underlying array.
-	signerOnePEMS := make([]string, 8)
-	copy(signerOnePEMS[0:4], certPEMs[0:4])
-	copy(signerOnePEMS[4:], certPEMs[6:])
-
-	ginkgo.BeforeEach(func(ctx context.Context) {
-		cleanup := mustInitCTBs(ctx, f, certPEMs)
+	ginkgo.JustBeforeEach(func(ctx context.Context) {
+		var cleanup func(ctx context.Context)
+		pemMapping, cleanup = mustInitCTBs(ctx, f, certPEMs)
 		ginkgo.DeferCleanup(cleanup)
 	})
 
@@ -114,33 +118,33 @@ var _ = SIGDescribe(feature.ClusterTrustBundle, feature.ClusterTrustBundleProjec
 		}{
 			{
 				name:       "can combine multiple CTBs with signer name and label selector",
-				signerName: "test.test/signer-one",
+				signerName: testSignerOneName,
 				selector: &metav1.LabelSelector{
 					MatchLabels: map[string]string{
 						"signer.alive": "true",
 					},
 				},
-				expectedOutputRegex: expectedRegexFromPEMs(certPEMs[1:4]...),
+				expectedOutputRegex: expectedRegexFromPEMs(pemMapping[testSignerOneName].Intersection(pemMapping[aliveSignersKey]).UnsortedList()...),
 			},
 			{
 				name:                "should start if only signer name and nil label selector + optional=true",
-				signerName:          "test.test/signer-one",
+				signerName:          testSignerOneName,
 				selector:            nil, // == match nothing
 				optionalVolume:      ptr.To(true),
 				expectedOutputRegex: []string{"content of file \"/var/run/ctbtest/trust-bundle.crt\": \n$"},
 			},
 			{
 				name:                "should start if only signer name and explicit label selector matches nothing + optional=true",
-				signerName:          "test.test/signer-one",
+				signerName:          testSignerOneName,
 				selector:            &metav1.LabelSelector{MatchLabels: map[string]string{"thismatches": "nothing"}},
 				optionalVolume:      ptr.To(true),
 				expectedOutputRegex: []string{"content of file \"/var/run/ctbtest/trust-bundle.crt\": \n$"},
 			},
 			{
 				name:                "can combine all signer CTBs with an empty label selector",
-				signerName:          "test.test/signer-one",
+				signerName:          testSignerOneName,
 				selector:            &metav1.LabelSelector{},
-				expectedOutputRegex: expectedRegexFromPEMs(signerOnePEMS...),
+				expectedOutputRegex: expectedRegexFromPEMs(pemMapping[testSignerOneName].UnsortedList()...),
 			},
 		} {
 			ginkgo.It(tt.name, func(ctx context.Context) {
@@ -171,7 +175,7 @@ var _ = SIGDescribe(feature.ClusterTrustBundle, feature.ClusterTrustBundleProjec
 				ctb: &v1.ClusterTrustBundleProjection{
 					Optional:   ptr.To(false),
 					Path:       "trust-bundle.crt",
-					SignerName: ptr.To("test.test/signer-one"),
+					SignerName: ptr.To(testSignerOneName),
 					LabelSelector: &metav1.LabelSelector{
 						MatchLabels: map[string]string{
 							"signer.alive": "unknown",
@@ -229,7 +233,7 @@ var _ = SIGDescribe(feature.ClusterTrustBundle, feature.ClusterTrustBundleProjec
 			v1.VolumeProjection{
 				ClusterTrustBundle: &v1.ClusterTrustBundleProjection{
 					Path:       "trust-bundle.crt",
-					SignerName: ptr.To("test.test/signer-one"),
+					SignerName: ptr.To(testSignerOneName),
 					LabelSelector: &metav1.LabelSelector{
 						MatchLabels: map[string]string{
 							"signer.alive": "false",
@@ -239,8 +243,8 @@ var _ = SIGDescribe(feature.ClusterTrustBundle, feature.ClusterTrustBundleProjec
 			},
 		)
 		expectedOutputs := map[int][]string{
-			0: append(expectedRegexFromPEMs(certPEMs[4]), getFileModeRegex("/var/run/ctbtest/trust-anchors.pem", nil)),
-			1: append(expectedRegexFromPEMs(certPEMs[6:8]...), getFileModeRegex("/var/run/ctbtest/trust-bundle.crt", nil)),
+			0: append(expectedRegexFromPEMs(pemMapping[noSignerKey].UnsortedList()...), getFileModeRegex("/var/run/ctbtest/trust-anchors.pem", nil)),
+			1: append(expectedRegexFromPEMs(pemMapping[testSignerOneName].Intersection(pemMapping[deadSignersKey]).UnsortedList()...), getFileModeRegex("/var/run/ctbtest/trust-bundle.crt", nil)),
 		}
 
 		e2epodoutput.TestContainerOutputsRegexp(ctx, f, "multiple CTB volumes", pod, expectedOutputs)
@@ -413,26 +417,59 @@ func podForCTBProjection(projectionSources ...v1.VolumeProjection) *v1.Pod {
 	return pod
 }
 
-func mustInitCTBs(ctx context.Context, f *framework.Framework, certPEMs []string) func(ctx context.Context) {
+// mustInitCTBs creates a testSet of ClusterTrustBundles and spreads them into several
+// categories based on their signer name and labels.
+// It returns a cleanup function for all the ClusterTrustBundle objects it created.
+// It also returns a map of sets of PEMs like so:
+//
+//	{
+//	  "test.test/signer-one": <set of all PEMs that are owned by test.test/signer-one>,
+//	  "test.test/signer-two": <set of all PEMs that are owned by test.test/signer-two>,
+//	  "signer.alive=true": <set of all PEMs whose CTBs contain `signer.alive: true` labels>,
+//	  "signer.alive=false": <set of all PEMs whose CTBs contain `signer.alive: false` labels>,
+//	  "no-signer": <set of all PEMs that appear in CTBs with no specific signers>,
+//	}
+func mustInitCTBs(ctx context.Context, f *framework.Framework, certPEMs []string) (map[string]sets.Set[string], func(ctx context.Context)) {
 	var cleanups []func(ctx context.Context)
+	var pemSets = map[string]sets.Set[string]{
+		testSignerOneName: sets.New[string](),
+		testSignerTwoName: sets.New[string](),
+		aliveSignersKey:   sets.New[string](),
+		deadSignersKey:    sets.New[string](),
+		noSignerKey:       sets.New[string](),
+	}
+
 	for i, caPEM := range certPEMs {
 		var cleanup func(ctx context.Context)
 		switch i {
 		case 1, 2, 3:
-			cleanup = mustCTBForCA(ctx, f, fmt.Sprintf("test.test:signer-one:%d", i), "test.test/signer-one", caPEM, map[string]string{"signer.alive": "true"})
+			cleanup = mustCTBForCA(ctx, f, fmt.Sprintf("test.test:signer-one:%d", i), testSignerOneName, caPEM, map[string]string{"signer.alive": "true"})
+
+			pemSets[testSignerOneName].Insert(caPEM)
+			pemSets[aliveSignersKey].Insert(caPEM)
 		case 4:
 			cleanup = mustCTBForCA(ctx, f, fmt.Sprintf("test.test.signer-one.%d", i), "", caPEM, map[string]string{"signer.alive": "true"})
+
+			pemSets[noSignerKey].Insert(caPEM)
 		case 5:
-			cleanup = mustCTBForCA(ctx, f, fmt.Sprintf("test.test:signer-two:%d", i), "test.test/signer-two", caPEM, map[string]string{"signer.alive": "true"})
+			cleanup = mustCTBForCA(ctx, f, fmt.Sprintf("test.test:signer-two:%d", i), testSignerTwoName, caPEM, map[string]string{"signer.alive": "true"})
+
+			pemSets[testSignerTwoName].Insert(caPEM)
+			pemSets[aliveSignersKey].Insert(caPEM)
 		case 6, 7:
-			cleanup = mustCTBForCA(ctx, f, fmt.Sprintf("test.test:signer-one:%d", i), "test.test/signer-one", caPEM, map[string]string{"signer.alive": "false"})
+			cleanup = mustCTBForCA(ctx, f, fmt.Sprintf("test.test:signer-one:%d", i), testSignerOneName, caPEM, map[string]string{"signer.alive": "false"})
+
+			pemSets[testSignerOneName].Insert(caPEM)
+			pemSets[deadSignersKey].Insert(caPEM)
 		default: // 0, 8 ,9
-			cleanup = mustCTBForCA(ctx, f, fmt.Sprintf("test.test:signer-one:%d", i), "test.test/signer-one", caPEM, nil)
+			cleanup = mustCTBForCA(ctx, f, fmt.Sprintf("test.test:signer-one:%d", i), testSignerOneName, caPEM, nil)
+
+			pemSets[testSignerOneName].Insert(caPEM)
 		}
 		cleanups = append(cleanups, cleanup)
 	}
 
-	return func(ctx context.Context) {
+	return pemSets, func(ctx context.Context) {
 		for _, c := range cleanups {
 			c(ctx)
 		}
