@@ -26,6 +26,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	mathrand "math/rand/v2"
 	"os"
 	"regexp"
 	"time"
@@ -67,20 +68,38 @@ var _ = SIGDescribe(feature.ClusterTrustBundle, feature.ClusterTrustBundleProjec
 	})
 
 	ginkgo.It("should be able to mount a single ClusterTrustBundle by name", func(ctx context.Context) {
-		pod := podForCTBProjection(v1.VolumeProjection{
-			ClusterTrustBundle: &v1.ClusterTrustBundleProjection{
-				Name: ptr.To("test.test.signer-one.4"),
-				Path: "trust-anchors.pem",
+
+		for _, tt := range []struct {
+			name           string
+			ctbName        string
+			optional       *bool
+			expectedOutput []string
+		}{
+			{
+				name:           "name of an existing CTB",
+				ctbName:        "test.test.signer-one.4",
+				expectedOutput: expectedRegexFromPEMs(certPEMs[4]),
 			},
-		})
+			{
+				name:           "name of a CTB that does not exist + optional=true",
+				ctbName:        "does-not-exist.at.all",
+				optional:       ptr.To(true),
+				expectedOutput: []string{"content of file \"/var/run/ctbtest/trust-anchors.pem\": \n$"},
+			},
+		} {
+			pod := podForCTBProjection(v1.VolumeProjection{
+				ClusterTrustBundle: &v1.ClusterTrustBundleProjection{
+					Name:     &tt.ctbName,
+					Path:     "trust-anchors.pem",
+					Optional: tt.optional,
+				},
+			})
 
-		fileModeRegexp := getFileModeRegex("/var/run/ctbtest/trust-anchors.pem", nil)
-		expectedOutput := []string{
-			regexp.QuoteMeta(certPEMs[4]),
-			fileModeRegexp,
+			fileModeRegexp := getFileModeRegex("/var/run/ctbtest/trust-anchors.pem", nil)
+			expectedOutput := append(tt.expectedOutput, fileModeRegexp)
+
+			e2epodoutput.TestContainerOutputRegexp(ctx, f, "project cluster trust bundle", pod, 0, expectedOutput)
 		}
-
-		e2epodoutput.TestContainerOutputRegexp(ctx, f, "project cluster trust bundle", pod, 0, expectedOutput)
 	})
 
 	ginkgo.Describe("should be capable to mount multiple trust bundles by signer+labels", func() {
@@ -106,7 +125,14 @@ var _ = SIGDescribe(feature.ClusterTrustBundle, feature.ClusterTrustBundleProjec
 			{
 				name:                "should start if only signer name and nil label selector + optional=true",
 				signerName:          "test.test/signer-one",
-				selector:            nil,
+				selector:            nil, // == match nothing
+				optionalVolume:      ptr.To(true),
+				expectedOutputRegex: []string{"content of file \"/var/run/ctbtest/trust-bundle.crt\": \n$"},
+			},
+			{
+				name:                "should start if only signer name and explicit label selector matches nothing + optional=true",
+				signerName:          "test.test/signer-one",
+				selector:            &metav1.LabelSelector{MatchLabels: map[string]string{"thismatches": "nothing"}},
 				optionalVolume:      ptr.To(true),
 				expectedOutputRegex: []string{"content of file \"/var/run/ctbtest/trust-bundle.crt\": \n$"},
 			},
@@ -218,6 +244,121 @@ var _ = SIGDescribe(feature.ClusterTrustBundle, feature.ClusterTrustBundleProjec
 		}
 
 		e2epodoutput.TestContainerOutputsRegexp(ctx, f, "multiple CTB volumes", pod, expectedOutputs)
+	})
+
+	ginkgo.It("should be able to mount a big number (>100) of CTBs", func(ctx context.Context) {
+		const numCTBs = 150
+
+		var certPEMs []string
+		var cleanups []func(ctx context.Context)
+		var projections []v1.VolumeProjection
+
+		defer func() {
+			for _, c := range cleanups {
+				c(ctx)
+			}
+		}()
+		for i := range numCTBs {
+			certPEMs = append(certPEMs, mustMakeCAPEM(fmt.Sprintf("root%d", i)))
+			cleanups = append(cleanups, mustCTBForCA(ctx, f, fmt.Sprintf("test.test:signer-hundreds:%d", i), "test.test/signer-hundreds", certPEMs[i], nil))
+			projections = append(projections, v1.VolumeProjection{ClusterTrustBundle: &v1.ClusterTrustBundleProjection{ // TODO: maybe mount them all to a single pod?
+				Name: ptr.To(fmt.Sprintf("test.test:signer-hundreds:%d", i)),
+				Path: fmt.Sprintf("trust-anchors-%d.pem", i),
+			},
+			})
+		}
+
+		ginkgo.By("as a single projection with many sources", func() {
+			randomIndexToTest := mathrand.Int32N(numCTBs)
+			pod := &v1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					GenerateName: "pod-projected-ctb-",
+				},
+				Spec: v1.PodSpec{
+					RestartPolicy: v1.RestartPolicyNever,
+					Containers: []v1.Container{
+						{
+							Name:  "projected-ctb-volume-test",
+							Image: imageutils.GetE2EImage(imageutils.Agnhost),
+							Args: []string{
+								"mounttest",
+								fmt.Sprintf("--file_content=/var/run/ctbtest/trust-anchors-%d.pem", randomIndexToTest),
+								fmt.Sprintf("--file_mode=/var/run/ctbtest/trust-anchors-%d.pem", randomIndexToTest),
+							},
+							VolumeMounts: []v1.VolumeMount{{
+								Name:      "ctb-volume",
+								MountPath: "/var/run/ctbtest",
+							}},
+						},
+					},
+					Volumes: []v1.Volume{{
+						Name: "ctb-volume",
+						VolumeSource: v1.VolumeSource{
+							Projected: &v1.ProjectedVolumeSource{
+								Sources: projections,
+							},
+						},
+					}},
+				},
+			}
+
+			expectedOutputs := append(expectedRegexFromPEMs(certPEMs[randomIndexToTest]), getFileModeRegex(fmt.Sprintf("/var/run/ctbtest/trust-anchors-%d.pem", randomIndexToTest), nil))
+			e2epodoutput.TestContainerOutputRegexp(ctx, f, "single CTB volume with many files", pod, 0, expectedOutputs)
+		})
+
+		ginkgo.By("as separate projections", func() {
+			randomIndexToTest := mathrand.Int32N(numCTBs)
+			pod := &v1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					GenerateName: "pod-projected-ctb-",
+				},
+				Spec: v1.PodSpec{
+					RestartPolicy: v1.RestartPolicyNever,
+					Containers: []v1.Container{
+						{
+							Name:  "projected-ctb-volume-test",
+							Image: imageutils.GetE2EImage(imageutils.Agnhost),
+							Args: []string{
+								"mounttest",
+								fmt.Sprintf("--file_content=/var/run/ctbtest-%d/%s", randomIndexToTest, projections[randomIndexToTest].ClusterTrustBundle.Path),
+								fmt.Sprintf("--file_mode=/var/run/ctbtest-%d/%s", randomIndexToTest, projections[randomIndexToTest].ClusterTrustBundle.Path),
+							},
+						},
+					},
+				},
+			}
+			for i := range projections {
+				pod.Spec.Volumes = append(pod.Spec.Volumes, v1.Volume{
+					Name: fmt.Sprintf("ctb-volume-%d", i),
+					VolumeSource: v1.VolumeSource{
+						Projected: &v1.ProjectedVolumeSource{
+							Sources: []v1.VolumeProjection{projections[i]},
+						},
+					},
+				})
+				pod.Spec.Containers[0].VolumeMounts = append(pod.Spec.Containers[0].VolumeMounts, v1.VolumeMount{
+					Name:      fmt.Sprintf("ctb-volume-%d", i),
+					MountPath: fmt.Sprintf("/var/run/ctbtest-%d", i),
+				})
+			}
+
+			expectedOutputs := append(expectedRegexFromPEMs(certPEMs[randomIndexToTest]), getFileModeRegex(fmt.Sprintf("/var/run/ctbtest-%d/trust-anchors-%d.pem", randomIndexToTest, randomIndexToTest), nil))
+			e2epodoutput.TestContainerOutputRegexp(ctx, f, "many CTB volumes", pod, 0, expectedOutputs)
+		})
+
+		ginkgo.By("as a single projection joined in a single file by signer name", func() {
+			pod := podForCTBProjection(v1.VolumeProjection{
+				ClusterTrustBundle: &v1.ClusterTrustBundleProjection{
+					Path:          "trust-anchors.pem",
+					SignerName:    ptr.To("test.test/signer-hundreds"),
+					LabelSelector: &metav1.LabelSelector{}, // == match everything
+				},
+			})
+
+			expectedOutputs := append(expectedRegexFromPEMs(certPEMs...), getFileModeRegex("/var/run/ctbtest/trust-anchors.pem", nil))
+			e2epodoutput.TestContainerOutputRegexp(ctx, f, "single CTB volume with a single file", pod, 0, expectedOutputs)
+
+		})
 	})
 })
 
