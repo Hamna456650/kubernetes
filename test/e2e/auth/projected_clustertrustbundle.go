@@ -37,6 +37,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/apimachinery/pkg/util/wait"
+	podutil "k8s.io/kubernetes/pkg/api/v1/pod"
 	"k8s.io/kubernetes/test/e2e/feature"
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2epodoutput "k8s.io/kubernetes/test/e2e/framework/pod/output"
@@ -200,6 +201,8 @@ var _ = SIGDescribe(feature.ClusterTrustBundle, feature.ClusterTrustBundleProjec
 					framework.Failf("failed to create a testing container: %v", err)
 				}
 
+				volumeNotReady := false
+				var latestReadyStatus *v1.PodCondition
 				err = wait.PollUntilContextTimeout(ctx, 1*time.Second, 10*time.Second, true, func(waitCtx context.Context) (done bool, err error) {
 					waitPod, err := f.ClientSet.CoreV1().Pods(pod.Namespace).Get(waitCtx, pod.Name, metav1.GetOptions{})
 					if err != nil {
@@ -211,6 +214,15 @@ var _ = SIGDescribe(feature.ClusterTrustBundle, feature.ClusterTrustBundleProjec
 						return true, nil
 					}
 
+					if latestReadyStatus = podutil.GetPodReadyCondition(waitPod.Status); latestReadyStatus != nil &&
+						latestReadyStatus.Status == v1.ConditionFalse &&
+						latestReadyStatus.Reason == "ContainersNotReady" &&
+						latestReadyStatus.Message == "containers with unready status: [projected-ctb-volume-test-0]" {
+						volumeNotReady = true
+						return false, nil
+					}
+					volumeNotReady = false
+
 					return false, nil
 				})
 
@@ -218,6 +230,10 @@ var _ = SIGDescribe(feature.ClusterTrustBundle, feature.ClusterTrustBundleProjec
 					framework.Fail("expected the pod not to start running, but it did")
 				} else if !errors.Is(err, context.DeadlineExceeded) {
 					framework.Failf("expected deadline exceeded, but got: %v", err)
+				}
+
+				if !volumeNotReady {
+					framework.Failf("expected the pod to not be ready because of a missing volume, but its status is different: %v", latestReadyStatus)
 				}
 			})
 		}
