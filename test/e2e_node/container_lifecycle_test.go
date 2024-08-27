@@ -410,9 +410,9 @@ var _ = SIGDescribe(framework.WithNodeConformance(), "Containers Lifecycle", fun
 				RestartPolicy: v1.RestartPolicyNever,
 				Containers: []v1.Container{
 					{
-						Name:  regular1,
-						Image: busyboxImage,
-                        ImagePullPolicy: v1.PullAlways,
+						Name:            regular1,
+						Image:           agnhostImage,
+						ImagePullPolicy: v1.PullAlways,
 						Command: ExecCommand(regular1, execCommand{
 							Delay:    30,
 							ExitCode: 0,
@@ -470,9 +470,9 @@ var _ = SIGDescribe(framework.WithNodeConformance(), "Containers Lifecycle", fun
 				RestartPolicy: v1.RestartPolicyOnFailure,
 				Containers: []v1.Container{
 					{
-						Name:  regular1,
-						Image: busyboxImage,
-                        ImagePullPolicy: v1.PullAlways,
+						Name:            regular1,
+						Image:           agnhostImage,
+						ImagePullPolicy: v1.PullAlways,
 						Command: ExecCommand(regular1, execCommand{
 							Delay:    30,
 							ExitCode: 0,
@@ -531,9 +531,9 @@ var _ = SIGDescribe(framework.WithNodeConformance(), "Containers Lifecycle", fun
 				RestartPolicy: v1.RestartPolicyAlways,
 				Containers: []v1.Container{
 					{
-						Name:  regular1,
-						Image: busyboxImage,
-                        ImagePullPolicy: v1.PullAlways,
+						Name:            regular1,
+						Image:           agnhostImage,
+						ImagePullPolicy: v1.PullAlways,
 						Command: ExecCommand(regular1, execCommand{
 							Delay:    exitSeconds,
 							ExitCode: 0,
