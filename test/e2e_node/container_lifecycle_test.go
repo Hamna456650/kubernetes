@@ -412,6 +412,7 @@ var _ = SIGDescribe(framework.WithNodeConformance(), "Containers Lifecycle", fun
 					{
 						Name:  regular1,
 						Image: busyboxImage,
+                        ImagePullPolicy: v1.PullAlways,
 						Command: ExecCommand(regular1, execCommand{
 							Delay:    30,
 							ExitCode: 0,
@@ -471,6 +472,7 @@ var _ = SIGDescribe(framework.WithNodeConformance(), "Containers Lifecycle", fun
 					{
 						Name:  regular1,
 						Image: busyboxImage,
+                        ImagePullPolicy: v1.PullAlways,
 						Command: ExecCommand(regular1, execCommand{
 							Delay:    30,
 							ExitCode: 0,
@@ -531,6 +533,7 @@ var _ = SIGDescribe(framework.WithNodeConformance(), "Containers Lifecycle", fun
 					{
 						Name:  regular1,
 						Image: busyboxImage,
+                        ImagePullPolicy: v1.PullAlways,
 						Command: ExecCommand(regular1, execCommand{
 							Delay:    exitSeconds,
 							ExitCode: 0,
