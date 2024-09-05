@@ -17,23 +17,22 @@ limitations under the License.
 package statusz
 
 import (
-	"bytes"
-	"context"
-	"fmt"
 	"net/http"
-	"time"
 
 	"k8s.io/apiserver/pkg/endpoints/metrics"
-	"k8s.io/klog/v2"
 )
 
 type Statusz struct {
 	registry *statuszRegistry
 }
 
-type Options struct {
-	ComponentName string
-	StartTime     time.Time
+type StatuszResponse struct {
+	StartTime            string
+	Uptime               string
+	GoVersion            string
+	BinaryVersion        string
+	CompatibilityVersion string
+	UsefulLinks          map[string]string
 }
 
 type mux interface {
@@ -41,8 +40,16 @@ type mux interface {
 }
 
 func (f Statusz) Install(m mux, opts Options) {
-	f.registry = Register(opts)
+	f.registry = register(opts)
 	f.registry.installHandler(m)
+}
+
+func register(opts Options) *statuszRegistry {
+	registry := &statuszRegistry{
+		options: opts,
+	}
+
+	return registry
 }
 
 func (reg *statuszRegistry) installHandler(m mux) {
@@ -58,25 +65,5 @@ func (reg *statuszRegistry) installHandler(m mux) {
 			/* component = */ "",
 			/* deprecated */ false,
 			/* removedRelease */ "",
-			handleSections(reg.sections)))
-}
-
-// handleSections returns an http.HandlerFunc that serves the provided sections.
-func handleSections(sections []section) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		var individualCheckOutput bytes.Buffer
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		for _, section := range sections {
-			err := section.Func(context.Background(), w)
-			if err != nil {
-				fmt.Fprintf(&individualCheckOutput, "[-]%s failed: reason withheld\n", section.Title)
-				klog.V(2).Infof("%s section failed: %v", section.Title, err)
-				http.Error(w, fmt.Sprintf("%s%s section failed", individualCheckOutput.String(), section.Title), http.StatusInternalServerError)
-				return
-			}
-			fmt.Fprint(w)
-		}
-		individualCheckOutput.WriteTo(w)
-	}
+			reg.handleStatusz()))
 }

@@ -1191,7 +1191,6 @@ func SetHostnameFuncForTests(name string) {
 
 func statuszOptions() statusz.Options {
 	return statusz.Options{
-		ComponentName: "apiserver",
-		StartTime:     time.Now(),
+		StartTime: time.Now(),
 	}
 }
