@@ -17,53 +17,76 @@ limitations under the License.
 package statusz
 
 import (
-	"encoding/json"
-	"fmt"
-	"net/http"
-	"sync"
 	"time"
+
+	"github.com/blang/semver/v4"
+	"k8s.io/component-base/version"
+	"k8s.io/klog/v2"
+
+	utilversion "k8s.io/apiserver/pkg/util/version"
+	compbasemetrics "k8s.io/component-base/metrics"
 )
 
-type Options struct {
-	StartTime            time.Time
-	GoVersion            string
-	BinaryVersion        string
-	CompatibilityVersion string
+type statuszRegistry interface {
+	processStartTime() time.Time
+	goVersion() string
+	binaryVersion() semver.Version
+	emulationVersion() semver.Version
+	minCompatibilityVersion() semver.Version
+	usefulLinks() map[string]string
 }
 
-type statuszRegistry struct {
-	lock    sync.Mutex
-	options Options
-}
+type registry struct{}
 
-func (reg *statuszRegistry) handleStatusz() http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		statuszData := reg.populateStatuszData()
-		jsonData, err := json.MarshalIndent(statuszData, "", "  ")
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		fmt.Fprint(w, string(jsonData))
+func (registry) processStartTime() time.Time {
+	start, err := compbasemetrics.GetProcessStart()
+	if err != nil {
+		klog.Errorf("Could not get process start time, %v", err)
 	}
+
+	return time.Unix(int64(start), 0)
 }
 
-func (reg *statuszRegistry) populateStatuszData() StatuszResponse {
-	uptime := int(time.Since(reg.options.StartTime).Seconds())
+func (registry) goVersion() string {
+	return version.Get().GoVersion
+}
 
-	return StatuszResponse{
-		StartTime: reg.options.StartTime.String(),
-		Uptime: fmt.Sprintf("%d hr %02d min %02d sec",
-			uptime/3600, (uptime/60)%60, uptime%60),
-		GoVersion:            reg.options.GoVersion,
-		BinaryVersion:        reg.options.BinaryVersion,
-		CompatibilityVersion: reg.options.CompatibilityVersion,
-		UsefulLinks: map[string]string{
-			"healthz": "/healthz",
-			"livez":   "/livez",
-			"readyz":  "/readyz",
-			"metrics": "/metrics",
-		},
+func (registry) binaryVersion() semver.Version {
+	var binaryVersion semver.Version
+	binaryVersion, err := semver.ParseTolerant(utilversion.DefaultComponentGlobalsRegistry.EffectiveVersionFor(utilversion.DefaultKubeComponent).BinaryVersion().String())
+	if err != nil {
+		klog.Errorf("err parsing binary version: %v", err)
+	}
+
+	return binaryVersion
+}
+
+func (registry) emulationVersion() semver.Version {
+	var emulationVersion semver.Version
+	emulationVersion, err := semver.ParseTolerant(utilversion.DefaultComponentGlobalsRegistry.EffectiveVersionFor(utilversion.DefaultKubeComponent).EmulationVersion().String())
+	if err != nil {
+		klog.Errorf("err parsing emulationVersion version: %v", err)
+	}
+
+	return emulationVersion
+}
+
+func (registry) minCompatibilityVersion() semver.Version {
+	var minCompatVersion semver.Version
+	minCompatVersion, err := semver.ParseTolerant(utilversion.DefaultComponentGlobalsRegistry.EffectiveVersionFor(utilversion.DefaultKubeComponent).MinCompatibilityVersion().String())
+	if err != nil {
+		klog.Errorf("err parsing min compatibility version: %v", err)
+	}
+
+	return minCompatVersion
+}
+
+func (registry) usefulLinks() map[string]string {
+	return map[string]string{
+		"healthz":     "/healthz",
+		"livez":       "/livez",
+		"readyz":      "/readyz",
+		"metrics":     "/metrics",
+		"sli metrics": "/metrics/slis",
 	}
 }

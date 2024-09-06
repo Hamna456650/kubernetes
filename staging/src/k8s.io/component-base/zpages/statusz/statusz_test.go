@@ -14,79 +14,122 @@ limitations under the License.
 package statusz
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/blang/semver/v4"
 	"github.com/google/go-cmp/cmp"
-	"github.com/google/go-cmp/cmp/cmpopts"
+)
+
+const wantTmpl = `
+----------------------------
+title: Kubernetes Statusz
+content_type: reference
+auto_generated: true
+description: Details of the status data that Kubernetes components report.
+----------------------------
+
+## Started: %v
+## Up: %s
+
+## Build Info
+--------------
+### Go version: %s
+### Binary version: %v
+### Emulation version: %v
+### Minimum Compatibility version: %v
+
+## List of useful endpoints
+--------------
+healthz:/healthz
+livez:/livez
+metrics:/metrics
+readyz:/readyz
+sli metrics:/metrics/slis
+`
+
+var (
+	fakeStartTime               = time.Now()
+	fakeUptime                  = uptime(fakeStartTime)
+	fakeGoVersion               = "1.21"
+	fakeBinaryVersion           = semver.Version{Major: 1, Minor: 31, Patch: 0}
+	fakeEmulationVersion        = semver.Version{Major: 1, Minor: 30, Patch: 0}
+	fakeMinCompatibilityVersion = semver.Version{Major: 1, Minor: 29, Patch: 0}
 )
 
 func TestStatusz(t *testing.T) {
-	timeNow := time.Now()
-	uptime := time.Since(timeNow)
-	binaryVersion := "1.32"
-	tests := []struct {
-		name       string
-		opts       Options
-		wantResp   *StatuszResponse
-		wantStatus int
-	}{
-		{
-			name: "default",
-			opts: Options{
-				StartTime:     timeNow,
-				BinaryVersion: binaryVersion,
-			},
-			wantResp: &StatuszResponse{
-				StartTime: timeNow.String(),
-				Uptime: fmt.Sprintf("%d hr %02d min %02d sec",
-					uptime/3600, (uptime/60)%60, uptime%60),
-				BinaryVersion: binaryVersion,
-				UsefulLinks: map[string]string{
-					"healthz": "/healthz",
-					"livez":   "/livez",
-					"readyz":  "/readyz",
-					"metrics": "/metrics",
-				},
-			},
-			wantStatus: http.StatusOK,
-		},
+	// Arrange
+	mux := http.NewServeMux()
+	reg = fakeRegistry{}
+	Install(mux)
+
+	// Act
+	path := "/statusz"
+	req, err := http.NewRequest("GET", fmt.Sprintf("http://example.com%s", path), nil)
+	if err != nil {
+		t.Fatalf("unexpected error while creating request: %v", err)
 	}
 
-	for i, test := range tests {
-		mux := http.NewServeMux()
-		Statusz{}.Install(mux, test.opts)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
 
-		path := "/statusz"
-		req, err := http.NewRequest("GET", fmt.Sprintf("http://example.com%s", path), nil)
-		if err != nil {
-			t.Fatalf("case[%d] Unexpected error while creating request: %v", i, err)
-		}
-
-		w := httptest.NewRecorder()
-		mux.ServeHTTP(w, req)
-
-		if w.Code != test.wantStatus {
-			t.Fatalf("case[%d] want status code: %v, got: %v", i, test.wantStatus, w.Code)
-		}
-
-		c := w.Header().Get("Content-Type")
-		if c != "text/plain; charset=utf-8" {
-			t.Fatalf("case[%d] want header: %v, got: %v", i, "text/plain", c)
-		}
-
-		gotResp := &StatuszResponse{}
-		if err = json.Unmarshal(w.Body.Bytes(), gotResp); err != nil {
-			t.Fatalf("case[%d] Unexpected error while unmarshaling wantResponse: %v", i, err)
-		}
-
-		if diff := cmp.Diff(test.wantResp, gotResp, cmpopts.IgnoreFields(StatuszResponse{}, "Uptime")); diff != "" {
-			t.Fatalf("Unexpected diff on response (-want,+got):\n%s", diff)
-		}
+	// Assert
+	if w.Code != http.StatusOK {
+		t.Fatalf("want status code: %v, got: %v", http.StatusOK, w.Code)
 	}
 
+	c := w.Header().Get("Content-Type")
+	if c != "text/plain; charset=utf-8" {
+		t.Fatalf("want header: %v, got: %v", "text/plain", c)
+	}
+
+	wantResp := fmt.Sprintf(
+		wantTmpl,
+		fakeStartTime.Format(time.UnixDate),
+		fakeUptime,
+		fakeGoVersion,
+		fakeBinaryVersion,
+		fakeEmulationVersion,
+		fakeMinCompatibilityVersion,
+	)
+	if diff := cmp.Diff(wantResp, string(w.Body.String())); diff != "" {
+		t.Errorf("Unexpected diff on response (-want,+got):\n%s", diff)
+	}
+}
+
+type fakeRegistry struct {
+	registry
+}
+
+func (fakeRegistry) processStartTime() time.Time {
+	return fakeStartTime
+}
+
+func (fakeRegistry) goVersion() string {
+	return fakeGoVersion
+}
+
+func (fakeRegistry) binaryVersion() semver.Version {
+	return fakeBinaryVersion
+}
+
+func (fakeRegistry) emulationVersion() semver.Version {
+	return fakeEmulationVersion
+}
+
+func (fakeRegistry) minCompatibilityVersion() semver.Version {
+	return fakeMinCompatibilityVersion
+}
+
+func (fakeRegistry) usefulLinks() map[string]string {
+	return map[string]string{
+		"healthz":     "/healthz",
+		"livez":       "/livez",
+		"readyz":      "/readyz",
+		"metrics":     "/metrics",
+		"sli metrics": "/metrics/slis",
+	}
 }
