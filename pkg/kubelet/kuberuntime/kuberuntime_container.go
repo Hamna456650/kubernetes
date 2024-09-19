@@ -1082,7 +1082,7 @@ func (m *kubeGenericRuntimeManager) computeInitContainerActions(pod *v1.Pod, pod
 			continue
 		}
 
-		var message string
+		message := fmt.Sprintf("Init container %s", container.Name)
 		switch status.State {
 		case kubecontainer.ContainerStateCreated:
 			// nothing to do but wait for it to start
@@ -1103,7 +1103,7 @@ func (m *kubeGenericRuntimeManager) computeInitContainerActions(pod *v1.Pod, pod
 						if startup == proberesults.Failure {
 							// If the restartable init container failed the startup probe,
 							// restart it.
-							message = fmt.Sprintf("Init container %s failed startup probe, will be restarted", container.Name)
+							message += "failed startup probe, will be restarted"
 							changes.ContainersToKill[status.ID] = containerToKillInfo{
 								name:      container.Name,
 								container: container,
@@ -1116,12 +1116,27 @@ func (m *kubeGenericRuntimeManager) computeInitContainerActions(pod *v1.Pod, pod
 					}
 				}
 
-				klog.V(4).InfoS("Init container has been initialized", "pod", klog.KObj(pod), "container", container.Name)
+				klog.V(4).InfoS(message, "has been initialized", "pod", klog.KObj(pod))
 				if i == (len(pod.Spec.InitContainers) - 1) {
 					podHasInitialized = true
 				} else if !isPreviouslyInitialized {
 					// this init container is initialized for the first time, start the next one
 					changes.InitContainersToStart = append(changes.InitContainersToStart, i+1)
+				}
+
+				// Restart running sidecar containers which have had their definition changed.
+				if _, _, changed := containerChanged(container, status); changed {
+					message += "definition changed, will be restarted"
+
+					changes.ContainersToKill[status.ID] = containerToKillInfo{
+						name:      container.Name,
+						container: container,
+						message:   message,
+						reason:    "",
+					}
+
+					changes.InitContainersToStart = append(changes.InitContainersToStart, i)
+					break
 				}
 
 				// A restartable init container does not have to take into account its
@@ -1135,7 +1150,7 @@ func (m *kubeGenericRuntimeManager) computeInitContainerActions(pod *v1.Pod, pod
 					if liveness == proberesults.Failure {
 						// If the restartable init container failed the liveness probe,
 						// restart it.
-						message = fmt.Sprintf("Init container %s failed liveness probe, will be restarted", container.Name)
+						message += "failed liveness probe, will be restarted"
 						changes.ContainersToKill[status.ID] = containerToKillInfo{
 							name:      container.Name,
 							container: container,
@@ -1147,20 +1162,6 @@ func (m *kubeGenericRuntimeManager) computeInitContainerActions(pod *v1.Pod, pod
 					}
 				}
 
-				// Restart running sidecar containers which have had their definition changed.
-				if _, _, changed := containerChanged(container, status); changed {
-					message = fmt.Sprintf("Init container %s definition changed, will be restarted", container.Name)
-
-					changes.ContainersToKill[status.ID] = containerToKillInfo{
-						name:      container.Name,
-						container: container,
-						message:   message,
-						reason:    "",
-					}
-
-					changes.InitContainersToStart = append(changes.InitContainersToStart, i)
-					break
-				}
 			} else { // init container
 				// nothing do to but wait for it to finish
 				break
@@ -1182,7 +1183,7 @@ func (m *kubeGenericRuntimeManager) computeInitContainerActions(pod *v1.Pod, pod
 					break
 				}
 
-				klog.V(4).InfoS("Init container has been initialized", "pod", klog.KObj(pod), "container", container.Name)
+				klog.V(4).InfoS(message, "has been initialized", "pod", klog.KObj(pod))
 				if i == (len(pod.Spec.InitContainers) - 1) {
 					podHasInitialized = true
 				} else {
@@ -1194,7 +1195,7 @@ func (m *kubeGenericRuntimeManager) computeInitContainerActions(pod *v1.Pod, pod
 		default: // kubecontainer.ContainerStatusUnknown or other unknown states
 			if types.IsRestartableInitContainer(container) {
 				// If the restartable init container is in unknown state, restart it.
-				message = fmt.Sprintf("Init container is in %q state, try killing it before restart", status.State)
+				message += fmt.Sprintf("is in %q state, try killing it before restart", status.State)
 				changes.ContainersToKill[status.ID] = containerToKillInfo{
 					name:      container.Name,
 					container: container,
@@ -1214,7 +1215,7 @@ func (m *kubeGenericRuntimeManager) computeInitContainerActions(pod *v1.Pod, pod
 				}
 
 				// If the init container is in unknown state, restart it.
-				message = fmt.Sprintf("Init container is in %q state, try killing it before restart", status.State)
+				message += fmt.Sprintf("is in %q state, try killing it before restart", status.State)
 				changes.ContainersToKill[status.ID] = containerToKillInfo{
 					name:      container.Name,
 					container: container,
