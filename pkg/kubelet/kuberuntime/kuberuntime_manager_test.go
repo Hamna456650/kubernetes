@@ -1651,6 +1651,18 @@ func TestComputePodActionsWithRestartableInitContainers(t *testing.T) {
 				m.startupManager.Remove(status.ContainerStatuses[2].ID)
 			},
 		},
+		"kill and recreate the restartable init container if the container definition changes": {
+			mutatePodFn: func(pod *v1.Pod) {
+				pod.Spec.RestartPolicy = v1.RestartPolicyAlways
+				pod.Spec.InitContainers[2].Image = "foo-image"
+			},
+			actions: podActions{
+				SandboxID:             baseStatus.SandboxStatuses[0].Id,
+				InitContainersToStart: []int{2},
+				ContainersToKill:      getKillMapWithInitContainers(mutatePodFn(basePod), baseStatus, []int{2}),
+				ContainersToStart:     []int{0, 1, 2},
+			},
+		},
 		"restart terminated restartable init container and next init container": {
 			mutatePodFn: func(pod *v1.Pod) { pod.Spec.RestartPolicy = v1.RestartPolicyAlways },
 			mutateStatusFn: func(pod *v1.Pod, status *kubecontainer.PodStatus) {

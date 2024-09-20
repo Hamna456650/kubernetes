@@ -1113,7 +1113,7 @@ func (m *kubeGenericRuntimeManager) computeInitContainerActions(pod *v1.Pod, pod
 					}
 				}
 
-				klog.V(4).InfoS(message, "has been initialized", "pod", klog.KObj(pod))
+				klog.V(4).InfoS("Init container has been initialized", "pod", klog.KObj(pod), "container", container.Name)
 				if i == (len(pod.Spec.InitContainers) - 1) {
 					podHasInitialized = true
 				} else if !isPreviouslyInitialized {
@@ -1167,7 +1167,7 @@ func (m *kubeGenericRuntimeManager) computeInitContainerActions(pod *v1.Pod, pod
 					break
 				}
 
-				klog.V(4).InfoS(message, "has been initialized", "pod", klog.KObj(pod))
+				klog.V(4).InfoS("Init container has been initialized", "pod", klog.KObj(pod), "container", container.Name)
 				if i == (len(pod.Spec.InitContainers) - 1) {
 					podHasInitialized = true
 				} else {
