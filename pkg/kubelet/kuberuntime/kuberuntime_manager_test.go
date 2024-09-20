@@ -1209,6 +1209,19 @@ func getKillMapWithInitContainers(pod *v1.Pod, status *kubecontainer.PodStatus, 
 	return m
 }
 
+func modifyKillMapContainerImage(containersToKill map[kubecontainer.ContainerID]containerToKillInfo, status *kubecontainer.PodStatus, cIndexes []int, imageNames []string) map[kubecontainer.ContainerID]containerToKillInfo {
+	for idx, i := range cIndexes {
+		containerKillInfo := containersToKill[status.ContainerStatuses[i].ID]
+		updatedContainer := containerKillInfo.container.DeepCopy()
+		updatedContainer.Image = imageNames[idx]
+		containersToKill[status.ContainerStatuses[i].ID] = containerToKillInfo{
+			container: updatedContainer,
+			name:      containerKillInfo.name,
+		}
+	}
+	return containersToKill
+}
+
 func verifyActions(t *testing.T, expected, actual *podActions, desc string) {
 	if actual.ContainersToKill != nil {
 		// Clear the message and reason fields since we don't need to verify them.
@@ -1508,6 +1521,7 @@ func TestComputePodActionsWithRestartableInitContainers(t *testing.T) {
 		mutateStatusFn func(*v1.Pod, *kubecontainer.PodStatus)
 		actions        podActions
 		resetStatusFn  func(*kubecontainer.PodStatus)
+		resetPodFn     func(*v1.Pod)
 	}{
 		"initialization completed; start all containers": {
 			actions: podActions{
@@ -1659,7 +1673,7 @@ func TestComputePodActionsWithRestartableInitContainers(t *testing.T) {
 			actions: podActions{
 				SandboxID:             baseStatus.SandboxStatuses[0].Id,
 				InitContainersToStart: []int{2},
-				ContainersToKill:      getKillMapWithInitContainers(basePod, baseStatus, []int{2}),
+				ContainersToKill:      modifyKillMapContainerImage(getKillMapWithInitContainers(basePod, baseStatus, []int{2}), baseStatus, []int{2}, []string{"foo-image"}),
 				ContainersToStart:     []int{0, 1, 2},
 			},
 		},
@@ -1851,6 +1865,9 @@ func TestComputePodActionsWithRestartableInitContainers(t *testing.T) {
 		verifyActions(t, &test.actions, &actions, desc)
 		if test.resetStatusFn != nil {
 			test.resetStatusFn(status)
+		}
+		if test.resetPodFn != nil {
+			test.resetPodFn(pod)
 		}
 	}
 }
