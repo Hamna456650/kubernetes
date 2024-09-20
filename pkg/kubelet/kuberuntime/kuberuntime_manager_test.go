@@ -1659,7 +1659,7 @@ func TestComputePodActionsWithRestartableInitContainers(t *testing.T) {
 			actions: podActions{
 				SandboxID:             baseStatus.SandboxStatuses[0].Id,
 				InitContainersToStart: []int{2},
-				ContainersToKill:      getKillMapWithInitContainers(mutatePodFn(basePod), baseStatus, []int{2}),
+				ContainersToKill:      getKillMapWithInitContainers(basePod, baseStatus, []int{2}),
 				ContainersToStart:     []int{0, 1, 2},
 			},
 		},
