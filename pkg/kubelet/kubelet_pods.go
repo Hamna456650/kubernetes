@@ -1608,39 +1608,9 @@ func getPhase(pod *v1.Pod, info []v1.ContainerStatus, podIsTerminal bool) v1.Pod
 	stopped := 0
 	succeeded := 0
 
-	// restartable init containers
-	for _, container := range spec.InitContainers {
-		if !kubetypes.IsRestartableInitContainer(&container) {
-			// Skip the regular init containers, as they have been handled above.
-			continue
-		}
-		containerStatus, ok := podutil.GetContainerStatus(info, container.Name)
-		if !ok {
-			unknown++
-			continue
-		}
-
-		switch {
-		case containerStatus.State.Running != nil:
-			if containerStatus.Started == nil || !*containerStatus.Started {
-				pendingRestartableInitContainers++
-			}
-			running++
-		case containerStatus.State.Terminated != nil:
-			// Do nothing here, as terminated restartable init containers are not
-			// taken into account for the pod phase.
-		case containerStatus.State.Waiting != nil:
-			if containerStatus.LastTerminationState.Terminated != nil {
-				// Do nothing here, as terminated restartable init containers are not
-				// taken into account for the pod phase.
-			} else {
-				pendingRestartableInitContainers++
-				waiting++
-			}
-		default:
-			pendingRestartableInitContainers++
-			unknown++
-		}
+	if utilfeature.DefaultFeatureGate.Enabled(features.SidecarContainers) {
+		// restartable init containers
+		pendingRestartableInitContainers, unknown, running, waiting = handleRestartableInitContainers(spec, info, unknown, running, waiting)
 	}
 
 	for _, container := range spec.Containers {
@@ -1725,6 +1695,46 @@ func getPhase(pod *v1.Pod, info []v1.ContainerStatus, podIsTerminal bool) v1.Pod
 		klog.V(5).InfoS("Pod default case, pending")
 		return v1.PodPending
 	}
+}
+
+// handleRestartableInitContainers handles restartable initialization containers.
+func handleRestartableInitContainers(spec v1.PodSpec, info []v1.ContainerStatus, unknown, running, waiting int) (int, int, int, int) {
+	pendingRestartableInitContainers := 0
+
+	for _, container := range spec.InitContainers {
+		if !kubetypes.IsRestartableInitContainer(&container) {
+			// Skip the regular init containers, as they have been handled above.
+			continue
+		}
+		containerStatus, ok := podutil.GetContainerStatus(info, container.Name)
+		if !ok {
+			unknown++
+			continue
+		}
+
+		switch {
+		case containerStatus.State.Running != nil:
+			if containerStatus.Started == nil || !*containerStatus.Started {
+				pendingRestartableInitContainers++
+			}
+			running++
+		case containerStatus.State.Terminated != nil:
+			// Do nothing here, as terminated restartable init containers are not
+			// taken into account for the pod phase.
+		case containerStatus.State.Waiting != nil:
+			if containerStatus.LastTerminationState.Terminated != nil {
+				// Do nothing here, as terminated restartable init containers are not
+				// taken into account for the pod phase.
+			} else {
+				pendingRestartableInitContainers++
+				waiting++
+			}
+		default:
+			pendingRestartableInitContainers++
+			unknown++
+		}
+	}
+	return pendingRestartableInitContainers, unknown, running, waiting
 }
 
 func deleteCustomResourceFromResourceRequirements(target *v1.ResourceRequirements) {
