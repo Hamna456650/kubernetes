@@ -29,7 +29,9 @@ import (
 	kubeletconfig "k8s.io/kubernetes/pkg/kubelet/apis/config"
 	"k8s.io/kubernetes/pkg/kubelet/apis/config/validation"
 	kubetypes "k8s.io/kubernetes/pkg/kubelet/types"
+	kubeletutil "k8s.io/kubernetes/pkg/kubelet/util"
 	utilpointer "k8s.io/utils/pointer"
+	"k8s.io/utils/ptr"
 )
 
 var (
@@ -78,6 +80,8 @@ var (
 		ContainerRuntimeEndpoint:    "unix:///run/containerd/containerd.sock",
 		ContainerLogMaxWorkers:      1,
 		ContainerLogMonitorInterval: metav1.Duration{Duration: 10 * time.Second},
+		// In cgroup v1, SingleProcessOOMKill is required to be true to pass.
+		SingleProcessOOMKill: ptr.To(!kubeletutil.IsCgroup2UnifiedMode()),
 	}
 )
 
