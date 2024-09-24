@@ -790,6 +790,8 @@ type WatchListResult struct {
 	// it is used to construct the final list response
 	// normally this information is filled by the server
 	gv schema.GroupVersion
+
+	serverProvidedGVK string
 }
 
 func (r WatchListResult) Into(obj runtime.Object) error {
@@ -904,6 +906,7 @@ func (r *Request) handleWatchList(ctx context.Context, w watch.Interface) WatchL
 						items:                      items,
 						initialEventsEndBookmarkRV: meta.GetResourceVersion(),
 						gv:                         r.c.content.GroupVersion,
+						serverProvidedGVK:          meta.GetAnnotations()[metav1.InitialEventsAnnotationKey],
 					}
 				}
 			default:
