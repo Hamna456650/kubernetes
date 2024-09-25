@@ -28,6 +28,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation/field"
+	"k8s.io/apiserver/pkg/features"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
 )
 
 // StatusError is an error intended for consumption by a REST API server; it can also be
@@ -377,6 +379,9 @@ func NewServerTimeout(qualifiedResource schema.GroupResource, operation string, 
 }
 
 func NewStorageReadError(qualifiedResource schema.GroupResource, resourcePrefix string, keysToError map[string]error) *StatusError {
+	if !utilfeature.DefaultFeatureGate.Enabled(features.AllowUnsafeMalformedObjectDeletion) {
+		panic("StorageReadError should not be used unless the 'AllowUnsafeMalformedObjectDeletion' feature gate is enabled")
+	}
 	var causes []metav1.StatusCause
 	allKeys := make([]string, 0, len(keysToError))
 	for failedKey, err := range keysToError {
