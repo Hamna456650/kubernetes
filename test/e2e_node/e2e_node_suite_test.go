@@ -109,6 +109,7 @@ func registerNodeFlags(flags *flag.FlagSet) {
 	flags.Var(cliflag.NewMapStringBool(&featureGates), "feature-gates", "A set of key=value pairs that describe feature gates for alpha/experimental features.")
 	flags.Var(cliflag.NewMapStringBool(&serviceFeatureGates), "service-feature-gates", "A set of key=value pairs that describe feature gates for alpha/experimental features for API service.")
 	flags.BoolVar(&framework.TestContext.StandaloneMode, "standalone-mode", false, "If true, starts kubelet in standalone mode.")
+	flags.BoolVar(&framework.TestContext.CRIProxyEnabled, "cri-proxy-enabled", false, "If true, enable CRI API proxy for failure injection.")
 }
 
 func init() {
@@ -233,7 +234,7 @@ var _ = ginkgo.SynchronizedBeforeSuite(func(ctx context.Context) []byte {
 	if framework.TestContext.PrepullImages {
 		klog.Infof("Pre-pulling images so that they are cached for the tests.")
 		updateImageAllowList(ctx)
-		err := PrePullAllImages()
+		err := PrePullAllImages(ctx)
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 	}
 

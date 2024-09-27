@@ -45,7 +45,6 @@ import (
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/component-base/featuregate"
-	internalapi "k8s.io/cri-api/pkg/apis"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
 	remote "k8s.io/cri-client/pkg"
 	"k8s.io/klog/v2"
@@ -64,6 +63,7 @@ import (
 	"k8s.io/kubernetes/test/e2e/framework"
 	e2emetrics "k8s.io/kubernetes/test/e2e/framework/metrics"
 	e2enode "k8s.io/kubernetes/test/e2e/framework/node"
+	"k8s.io/kubernetes/test/e2e_node/criproxy"
 	e2enodekubelet "k8s.io/kubernetes/test/e2e_node/kubeletconfig"
 	imageutils "k8s.io/kubernetes/test/utils/image"
 
@@ -316,7 +316,7 @@ func logKubeletLatencyMetrics(ctx context.Context, metricNames ...string) {
 }
 
 // getCRIClient connects CRI and returns CRI runtime service clients and image service client.
-func getCRIClient() (internalapi.RuntimeService, internalapi.ImageManagerService, error) {
+func getCRIClient() (*criproxy.RuntimeServiceProxy, *criproxy.ImageServiceProxy, error) {
 	// connection timeout for CRI service connection
 	logger := klog.Background()
 	const connectionTimeout = 2 * time.Minute
@@ -335,7 +335,12 @@ func getCRIClient() (internalapi.RuntimeService, internalapi.ImageManagerService
 	if err != nil {
 		return nil, nil, err
 	}
-	return r, i, nil
+	if framework.TestContext.CRIProxyEnabled {
+		runtimeServiceProxy := criproxy.NewRuntimeServiceProxy(r)
+		imageServiceProxy := criproxy.NewImageServiceProxy(i)
+		return runtimeServiceProxy, imageServiceProxy, nil
+	}
+	return criproxy.NewRuntimeServiceProxy(r), criproxy.NewImageServiceProxy(i), nil
 }
 
 // findKubeletServiceName searches the unit name among the services known to systemd.
