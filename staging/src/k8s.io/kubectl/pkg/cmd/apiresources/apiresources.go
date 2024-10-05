@@ -244,11 +244,16 @@ func (o *APIResourceOptions) RunAPIResources() error {
 	}
 
 	if *o.PrintFlags.OutputFormat == "json" || *o.PrintFlags.OutputFormat == "yaml" {
-		for _, resource := range filteredList {
-			err := o.PrintObj(resource, w)
-			errs = append(errs, err)
+		flatList := &metav1.APIResourceList{
+			TypeMeta: metav1.TypeMeta{
+				APIVersion: filteredList[0].APIVersion,
+				Kind:       filteredList[0].Kind,
+			},
 		}
-		return errors.NewAggregate(errs)
+		for _, resource := range filteredList {
+			flatList.APIResources = append(flatList.APIResources, resource.APIResources...)
+		}
+		return o.PrintObj(flatList, w)
 	}
 
 	sort.Stable(sortableResource{resources, o.SortBy})
